@@ -97,35 +97,38 @@ window.addEventListener('load', () => {
     const fetchJson = async (url) => (await fetch(url)).json() 
     const fetchText = async (url) => (await fetch(url)).text() 
 
-    const validateSelector = () => {
+    let isValid = false
+    const getValidationMessage = () => {
         if (sourceFormat.value !== 'xhtml' && sourceFormat.value !== 'cnxml') {
-            selectorEl.setCustomValidity('Choose a format to search: XHTML or CNXML')
-            return
+            return 'Choose a format to search: XHTML or CNXML'
         }
         const selector = selectorEl.value
         // Try validating this as a CSS selector
         try {
             document.querySelector(selector)
-            selectorEl.setCustomValidity('') // valid!
-            return
+            return '' // valid!
         } catch (e) {
             // validate it as an XPath (ensure it begins with "/h:")
             if (/^\/[h,c,m]:/.test(selector) || /^\/\/[h,c,m]:/.test(selector)) {
                 try {
                     document.evaluate(selector, sandboxEl, xpathNamespaceResolver, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null)
-                    selectorEl.setCustomValidity('') // valid!
-                    return
+                    return '' // valid!
                 } catch (e) { }
             }
         }
-        selectorEl.setCustomValidity("Enter a valid CSS selector or XPath selector. In the case of an XPath selector, ensure that it begins with / and that all elements are prefixed with h: or m: or c:")
+        return "Enter a valid CSS selector or XPath selector. In the case of an XPath selector, ensure that it begins with / and that all elements are prefixed with h: or m: or c:"
+    }
+    const validateSelector = () => {
+        const msg = getValidationMessage()
+        selectorEl.setCustomValidity(msg)
+        isValid = !msg
     }
     selectorEl.addEventListener('input', validateSelector)
-    selectorEl.addEventListener('blur', validateSelector)
     selectorEl.addEventListener('keyup', validateSelector)
+    form.addEventListener('change', validateSelector)
 
-    skipEl.addEventListener('click', () => isSkipping = true)
-    stopEl.addEventListener('click', () => isStopping = true)
+    skipEl.addEventListener('click', (e) => { e.preventDefault(); isSkipping = true } )
+    stopEl.addEventListener('click', (e) => { e.preventDefault(); isStopping = true } )
     const startFn = async () => {
         // For each book, fetch the ToC
         // Fetch each Page
@@ -177,17 +180,6 @@ window.addEventListener('load', () => {
             recLeafPages(pageRefs, bookJson.tree)
     
             for (const pageRef of pageRefs) {
-                // Break when stop button is pressed
-                if (isStopping) {
-                    selectorEl.disabled = false
-                    startEl.disabled = false
-                    stopEl.disabled = true
-                    skipEl.disabled = true
-                    return
-                }
-                if (isSkipping) {
-                    break
-                }
                 const i = pageRefs.indexOf(pageRef)
     
                 const pageUrl = `${bookUrl}:${pageRef.id}`
@@ -199,7 +191,6 @@ window.addEventListener('load', () => {
                 if (sourceFormat.value === 'cnxml') {
                     const moduleResource = pageJson.resources.filter(r => r.filename === 'index.cnxml')[0]
                     if (!moduleResource) { 
-                        console.error(`Could not find CNXML file for page ${pageRef.id}. Maybe it is a collated page`)
                         continue
                     }
                     sourceCode = await fetchWithBackoff(`https://archive-staging.cnx.org/resources/${moduleResource.id}`, false)
@@ -228,6 +219,18 @@ window.addEventListener('load', () => {
                     isSkipping = true
                 }
 
+                // Break when stop button is pressed
+                if (isStopping) {
+                    selectorEl.disabled = false
+                    startEl.disabled = false
+                    stopEl.disabled = true
+                    skipEl.disabled = true
+                    return
+                }
+                if (isSkipping) {
+                    break
+                }
+                
             }
             analyzeFn('BOOK:END', bookJson, bookUuid)    
         }
@@ -238,17 +241,6 @@ window.addEventListener('load', () => {
         skipEl.disabled = true
 
     }
-    startEl.addEventListener('click', async () => {
-        try {
-            await startFn()
-        } catch (err) {
-            alert(err.message)
-            selectorEl.disabled = false
-            startEl.disabled = false
-            stopEl.disabled = true
-            skipEl.disabled = true
-        }
-    })
 
     // load the form from the URL
     if (window.location.hash.length > 1) {
@@ -258,6 +250,7 @@ window.addEventListener('load', () => {
             analyzeToggleEl.checked = true
             analyzeCodeEl.value = state.code
         }
+        validateSelector()
     }
     if (window.location.search.length > 1) {
         const args = querystring(window.location.search.substring(1))
@@ -267,7 +260,21 @@ window.addEventListener('load', () => {
                 form.elements[key].value = args[key]
             }
         }
+        validateSelector()
     }
+
+    // Run!
+    if (isValid) {
+        startFn().then(null, (err) => {
+            console.error(err.message)
+            alert(`Error: ${err.message}`)
+            selectorEl.disabled = false
+            startEl.disabled = false
+            stopEl.disabled = true
+            skipEl.disabled = true
+        })
+    }
+
 
     function recLeafPages(acc, node) {
         if (node.contents) {
